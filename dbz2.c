@@ -55,8 +55,8 @@ void DBz2_dequeue(CIRCLE_handle *handle)
 	char* ibuf=(char*)malloc(1*block_size);	
 	read(fd,ibuf,(size_t)block_size);
 	int outSize=(int) ((inSize*1.01)+600);	
-	a[blocks_processed]=malloc(sizeof(char)*outSize); 
-	ret=BZ2_bzBuffToBuffCompress(out_buff,&outSize, ibuf, bc_size,0,30);
+	//a[blocks_processed]=malloc(sizeof(char)*outSize); 
+	ret=BZ2_bzBuffToBuffCompress(a[blocks_processed],&outSize, ibuf, bc_size,0,30);
         struct block_info this_block; 	
 	my_blocks[my_tot_blocks].sno=block_no;
 	my_blocks[my_tot_blocks].length=outSize;
@@ -158,7 +158,7 @@ int compress(int argc, char **argv)
 		CIRCLE_cb_process(&DBz2_Dequeue);
 		CIRCLE_begin();
 		CIRCLE_finalize();
-		MPI_Gather(&blocks_processed,1,MPI_INT,rcount,1,MPI_INT,0,comm);	
+		MPI_Gather(&blocks_processed,1,MPI_INT,rcount,1,MPI_INT,0,MPI_COMM_WORLD);	
 		long displs[size];	
 		displs[0]=0;	
 		for(int k=1;k<size,k++)
@@ -177,9 +177,26 @@ int compress(int argc, char **argv)
 			}
 			last_offset=this_wave_blocks[k-1]->offset+this_wave_blocks[k-1]->length;	
 		}	
+		MPI_Scatterv(&rbuf,rcount,displs,metatype,&my_blocks[my_prev_blocks],blocks_processed,metatype,0,MPI_COMM_WORLD);
+		for(int k=0;k<blocks_processed;k++)
+		{
+			lseek(fd_out,my_blocks[my_prev_blocks+k].offset,SEEK_SET);
+			write(fd_out,&a[k],a[k].length);
+		}	
 		my_prev_blocks=my_tot_blocks;	
 		blocks_processed=0;
-	}	
+	}
+	MPI_Bcast(&last_offset,1,MPI_UNSIGNED_LONG,0,MPI_COMM_WORLD);	
+	for(int k=0;k<my_tot_blocks;k++)
+	{
+		lseek(fd_out,last_offset+my_blocks[k].sno*8,SEEK_SET);
+		write(fd_out,&my_blocks[k].offset,8);
+	}
+	if(rank==0)
+	{
+		lseek(fd_out,last_offset+tot_blocks*8,SEEK_SET);
+		write(fd_out,&last_offset,8);
+	}			
 	MPI_Finalize();
 }
 int main(int argc , char ** argv)
